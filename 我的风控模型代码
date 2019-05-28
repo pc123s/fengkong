@@ -1,357 +1,576 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Dec 27 09:38:58 2018
+Created on Sun Dec 23 22:23:31 2018
 
-@author: brandaliu
+@author: Administrator
 """
-##常用函数
-def SplitData(df, col, numOfSplit, special_attribute=[]):
-    '''
-    :param df: 按照col排序后的数据集
-    :param col: 待分箱的变量
-    :param numOfSplit: 切分的组别数
-    :param special_attribute: 在切分数据集的时候，某些特殊值需要排除在外
-    :return: 在原数据集上增加一列，把原始细粒度的col重新划分成粗粒度的值，便于分箱中的合并处理
-    '''
-    df2 = df.copy()
-    if special_attribute != []:
-        df2 = df.loc[df[col].isin(special_attribute)]
-    N = df2.shape[0]
-    n = N/numOfSplit
-    splitPointIndex =[int(round(i*n,0)) for i in range(1,numOfSplit)]
-    rawValues = sorted(list(df2[col]))
-    splitPoint = [rawValues[i] for i in splitPointIndex]
-    splitPoint = sorted(list(set(splitPoint)))
-    return splitPoint
-####AssignGroup为分组函数，其意义是将每个离散型变量通过阈值分为不同的组值 如 x1=0.2，x2=0.1 组值为[0,1],则x1=1,x2=1
-def AssignGroup(x, bin):
-    N = len(bin)
-    if x<=min(bin):
-        return min(bin)
-    elif x>max(bin):
-        return 100000000000000000
-    else:
-        for i in range(N-1):
-            if bin[i] < x <= bin[i+1]:
-                return bin[i+1]
-def Chi2(df, total_col, bad_col, overallRate):
-    '''
-    :param df: 包含全部样本总计与坏样本总计的数据框
-    :param total_col: 全部样本的个数
-    :param bad_col: 坏样本的个数
-    :param overallRate: 全体样本的坏样本占比
-    :return: 卡方值
-    '''
-    df2 = df.copy()
-    # 期望坏样本个数＝全部样本个数*平均坏样本占比
-    df2['expected'] = df[total_col].apply(lambda x: x*overallRate)
-    combined = zip(df2['expected'], df2[bad_col])
-    chi = [(i[0]-i[1])**2/i[0] for i in combined]
-    chi2 = sum(chi)
-    return chi2
-def AssignBin(x, cutOffPoints,special_attribute=[]):
-    '''
-    :param x: 某个变量的某个取值
-    :param cutOffPoints: 上述变量的分箱结果，用切分点表示
-    :param special_attribute:  不参与分箱的特殊取值
-    :return: 分箱后的对应的第几个箱，从0开始
-    for example, if cutOffPoints = [10,20,30], if x = 7, return Bin 0. If x = 35, return Bin 3
-    '''
-    numBin = len(cutOffPoints) + 1 + len(special_attribute)
-    if x in special_attribute:
-        i = special_attribute.index(x)+1
-        return '{}'.format(0-i)
-    if x<=cutOffPoints[0]:
-        return '0'
-    elif x > cutOffPoints[-1]:
-        return '{}'.format(numBin-1)
-    else:
-        for i in range(0,numBin-1):
-            if cutOffPoints[i] < x <=  cutOffPoints[i+1]:
-                return '{}'.format(i+1)
-    cutOffPoints = [10,20,30]
-  
+import pandas as pd
+import re
+import time
+import datetime
+from dateutil.relativedelta import relativedelta
+from sklearn.model_selection import train_test_split
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+from sklearn.linear_model import LogisticRegressionCV
+import statsmodels.api as sm
+from  sklearn.metrics import *
+from imblearn.over_sampling import SMOTE
+
     
-## 判断某变量的坏样本率是否单调
-def BadRateMonotone(df, sortByVar, target,special_attribute = []):
-    '''
-    :param df: 包含检验坏样本率的变量，和目标变量
-    :param sortByVar: 需要检验坏样本率的变量
-    :param target: 目标变量，0、1表示好、坏
-    :param special_attribute: 不参与检验的特殊值
-    :return: 坏样本率单调与否
-    '''
-    df2 = df.loc[~df[sortByVar].isin(special_attribute)]
-    if len(set(df2[sortByVar])) <= 2:
-        return True
-    regroup = BinBadRate(df2, sortByVar, target)[1]
-    combined = zip(regroup['total'],regroup['bad'])
-    badRate = [x[1]*1.0/x[0] for x in combined]
-    badRateNotMonotone = [badRate[i]<badRate[i+1] and badRate[i] < badRate[i-1] or badRate[i]>badRate[i+1] and badRate[i] > badRate[i-1]
-                       for i in range(1,len(badRate)-1)]
-    if True in badRateNotMonotone:
-        return False
+# 数据预处理
+# 1，读入数据
+# 2，选择合适的建模样本
+# 3，数据集划分成训练集和测试集
+os.chdir("C://Users/liuji/Desktop/我的风控代码新1")
+#os.chdir("C://Users/Administrator.LAPTOP-1HM8PV0L/Desktop/我的风控代码新1")
+allData = pd.read_csv('LoanStats3a.csv',header = 0, encoding = 'latin1')
+allData1=allData.copy()
+allData1.isnull().sum()
+dd=[]
+cc=[]
+rr=[]
+result=[]
+
+for i in allData1.columns:
+    d=len(allData1)-allData1[i].count()
+    r=(d/len(allData1))*100
+    rate='%.2f%%'% r
+    r1=(d/len(allData1))
+    print('字段名为：',str(i).ljust(10),'缺失值数量:',str(d).ljust(4),'缺失数量占比：',rate) #这里print主要是为了在脚本中观察是否获取到想要的数据，方便调试。
+    dd.append(i)
+    cc.append(d)
+    rr.append(r1)
+rr1=pd.Series(rr)
+dd1=pd.Series(dd)
+cc1=pd.Series(cc)
+"""
+第一步 缺失值处理
+删除大于70%的缺失值
+"""
+index=rr1[rr1>=0.7].index
+dd2=dd1[index]
+rr2=rr1[index]
+缺失值列表=pd.concat([dd2,rr2],axis=1)
+缺失值列表.to_csv("缺失值列表.csv")
+drop_value=list(dd2.values)
+allData2=allData1.drop(labels=drop_value,axis=1).copy()
+allData2.to_csv("drop_LoanStats3a.csv")
+##删除完成后的缺失字段
+dd_drop=[]
+cc_drop=[]
+rr_drop=[]
+rate_drop=[]
+for i in allData2.columns:
+    d=len(allData1)-allData1[i].count()
+    r=(d/len(allData1))*100
+    rate='%.2f%%'% r
+    r1=(d/len(allData1))
+    print('字段名为：',str(i).ljust(10),'缺失值数量:',str(d).ljust(4),'缺失数量占比：',rate) #这里print主要是为了在脚本中观察是否获取到想要的数据，方便调试。
+    dd_drop.append(i)
+    cc_drop.append(d)
+    rr_drop.append(r1)
+    rate_drop.append(rate)
+
+#########删除无关变量
+drop_label=["revol_util","initial_list_status","out_prncp","out_prncp_inv","total_pymnt_inv","total_rec_int",
+ "recoveries","collection_recovery_fee","last_credit_pull_d","collections_12_mths_ex_med","policy_code",
+ "tax_liens","hardship_flag","disbursement_method","debt_settlement_flag","acc_now_delinq",
+ "chargeoff_within_12_mths","delinq_amnt","application_type","mths_since_last_delinq","funded_amnt","funded_amnt_inv","installment","sub_grade",
+ "total_pymnt","total_rec_int","last_pymnt_d","last_pymnt_amnt","pub_rec_bankruptcies"]
+allData2=allData2.drop(labels=drop_label,axis=1)
+####将是否填写描述变为0-1变量，因为里面含有的缺失值过多，以防止在下一步缺失值处理时删除了太多无关数据
+def DescExisting(x):
+    x2 = str(x)
+    if x2 == 'nan':
+        return 'no desc'
     else:
-        return True
-def chimerge(df, col, target, max_interval=5,special_attribute=[],minBinPcnt=0):
-    '''
-    :param df: 包含目标变量与分箱属性的数据框
-    :param col: 需要分箱的属性
-    :param target: 目标变量，取值0或1
-    :param max_interval: 最大分箱数。如果原始属性的取值个数低于该参数，不执行这段函数
-    :param special_attribute: 不参与分箱的属性取值
-    :param minBinPcnt：最小箱的占比，默认为0
-    :return: 分箱结果
-    '''
-    colLevels = sorted(list(set(df[col])))
-    N_distinct = len(colLevels)
-    if N_distinct <= max_interval:  #如果原始属性的取值个数低于max_interval，不执行这段函数
-        print (col+"The number of original levels for {} is less than or equal to max intervals")
-        return colLevels[:-1]
+        return 'desc'
+allData2['desc'] =allData2['desc'].map(DescExisting)
+####再进行缺失值的删除
+allData2=allData2.dropna(axis=0)
+"""
+格式转化
+"""
+###将贷款状态变为目标变量
+allData2['loan_status'] = allData2['loan_status'].map(lambda x: int(x == 'Charged Off'))
+####将利率化为标准格式
+allData2["int_rate"]=allData2["int_rate"].map(lambda x:float(x.replace("%",""))/100)
+######将term化为标准格式
+allData2['term'] = allData2['term'].apply(lambda x:int(x.replace(' months','')))
+######将工作年限化为标准格式
+def CareerYear(x):
+    if x.find('NAN') > -1:
+        return -1
+    elif x.find("10+")>-1:
+        return 11
+    elif x.find('< 1') > -1:
+        return 0
     else:
-        if len(special_attribute)>=1:
-            df1 = df.loc[df[col].isin(special_attribute)]
-            df2 = df.loc[~df[col].isin(special_attribute)]
-        else:
-            df2 = df.copy()
-        N_distinct = len(list(set(df2[col])))
+        return int(re.sub("\D","",x))
+allData2['emp_length'] =allData2['emp_length'].map(CareerYear)
+allData2=allData2[~allData2['earliest_cr_line'].str.contains("1")]
+allData2.reset_index(drop=True,inplace=True)
 
-        # 步骤一: 通过col对数据集进行分组，求出每组的总样本数与坏样本数
-        if N_distinct > 100:
-            split_x = SplitData(df2, col, 100)
-            df2['temp'] = df2[col].map(lambda x: AssignGroup(x, split_x))
-        else:
-            df2['temp'] = df2[col]
-        # 总体bad rate将被用来计算expected bad count
-        (binBadRate, regroup, overallRate) = BinBadRate(df2, 'temp', target, grantRateIndicator=1)
+# 处理日期。其中主要为earliest_cr_line和issue_d两个变量
+##日期转化函数
+def ConvertDateStr(x,format):
+    if str(x) == 'nan':
+        return datetime.datetime.fromtimestamp(time.mktime(time.strptime('9900-1','%Y-%m')))
+    else:
+        return time.strftime("%Y-%m-%d",time.strptime(x,format))
+##将issue_d划为标准格式
+allData2['issue_d'] = allData2['issue_d'].map(lambda x: ConvertDateStr(x,'%b-%y'))
+allData2['earliest_cr_line'] = allData2['earliest_cr_line'].map(lambda x: ConvertDateStr(x,'%b-%y'))
+##变量衍生
+##1.计算第一个变量贷款与收入的比例
+allData2['limit_income'] =allData2.apply(lambda x: x.loan_amnt / x.annual_inc, axis = 1)
+def MonthGap(earlydata, latedata):
+    if latedata> earlydata:
+        gap = relativedelta(pd.to_datetime(latedata),pd.to_datetime(earlydata))
+        yr = gap.years
+        mth = gap.months
+        return yr*12+mth
+    else:
+        return 0
+# 考虑earliest_cr_line到申请日期的跨度，以月份记
+allData2["earliest_cr_to_issue_d"] = allData2.apply(lambda x: MonthGap(x.earliest_cr_line,x.issue_d), axis = 1)
+allData3=allData2.copy()
 
-        # 首先，每个单独的属性值将被分为单独的一组
-        # 对属性值进行排序，然后两两组别进行合并
-        colLevels = sorted(list(set(df2['temp'])))
-        groupIntervals = [[i] for i in colLevels]
+####将变量预处理完后的数据框写出
+allData3=allData3.drop(labels=["issue_d","earliest_cr_line"],axis=1)
+allData3=allData3[allData3.term==36]
+allData3=allData3.drop(labels="term",axis=1)
+allData3.to_csv("allData3.csv")
+##将部分数值变量中的字符型转化为整型
+allData3.delinq_2yrs=allData3.delinq_2yrs.map(lambda x :int(x))
+allData3.revol_bal=allData3.revol_bal.map(lambda x :int(x))
+allData3.total_acc=allData3.total_acc.map(lambda x :int(x))
+allData3=allData3[~allData3.home_ownership.str.contains("NONE")]            
+ 
 
-        # 步骤二：建立循环，不断合并最优的相邻两个组别，直到：
-        # 1，最终分裂出来的分箱数<＝预设的最大分箱数
-        # 2，每箱的占比不低于预设值（可选）
-        # 3，每箱同时包含好坏样本
-        # 如果有特殊属性，那么最终分裂出来的分箱数＝预设的最大分箱数－特殊属性的个数
-        split_intervals = max_interval - len(special_attribute)
-        while (len(groupIntervals) > split_intervals):  # 终止条件: 当前分箱数＝预设的分箱数
-            # 每次循环时, 计算合并相邻组别后的卡方值。具有最小卡方值的合并方案，是最优方案
-            chisqList = []
-            for k in range(len(groupIntervals)-1):
-                temp_group = groupIntervals[k] + groupIntervals[k+1]
-                df2b = regroup.loc[regroup['temp'].isin(temp_group)]
-                #chisq = Chi2(df2b, 'total', 'bad', overallRate)
-                chisq = Chi2(df2b, 'total', 'bad',overallRate)
-                chisqList.append(chisq)
-            best_comnbined = chisqList.index(min(chisqList))
-            groupIntervals[best_comnbined] = groupIntervals[best_comnbined] + groupIntervals[best_comnbined+1]
-            # after combining two intervals, we need to remove one of them
-            groupIntervals.remove(groupIntervals[best_comnbined+1])
-        groupIntervals = [sorted(i) for i in groupIntervals]
-        cutOffPoints = [max(i) for i in groupIntervals[:-1]]
+###将样本分为训练集和测试集
 
-        # 检查是否有箱没有好或者坏样本。如果有，需要跟相邻的箱进行合并，直到 每箱同时包含好坏样本
-        groupedvalues = df2['temp'].apply(lambda x: AssignBin(x, cutOffPoints))
-        df2['temp_Bin'] = groupedvalues
-        (binBadRate,regroup) = BinBadRate(df2, 'temp_Bin', target)
-        [minBadRate, maxBadRate] = [min(binBadRate.values()),max(binBadRate.values())]
-        while minBadRate ==0 or maxBadRate == 1:
-            # 找出全部为好／坏样本的箱
-            indexForBad01 = regroup[regroup['bad_rate'].isin([0,1])].temp_Bin.tolist()
-            bin=indexForBad01[0]
-            # 如果是最后一箱，则需要和上一个箱进行合并，也就意味着分裂点cutOffPoints中的最后一个需要移除
-            if bin == max(regroup.temp_Bin):
-                cutOffPoints = cutOffPoints[:-1]
-            # 如果是第一箱，则需要和下一个箱进行合并，也就意味着分裂点cutOffPoints中的第一个需要移除
-            elif bin == min(regroup.temp_Bin):
-                cutOffPoints = cutOffPoints[1:]
-            # 如果是中间的某一箱，则需要和前后中的一个箱进行合并，依据是较小的卡方值
+"""
+第二步：分出训练集和测试集
+"""
+traindata,testdata = train_test_split(allData3,test_size=0.4,random_state=0)
+traindata.reset_index(drop=True,inplace=True)
+testdata.reset_index(drop=True,inplace=True)
+'''
+第三步：分箱，采用chimerge,要求分箱完之后：
+（1）不超过5箱
+（2）Bad Rate单调
+（3）每箱同时包含好坏样本
+（4）特殊值如－1，单独成一箱
+
+连续型变量可直接分箱
+类别型变量：
+（a）当取值较多时，先用bad rate编码，再用连续型分箱的方式进行分箱
+（b）当取值较少时：
+    （b1）如果每种类别同时包含好坏样本，无需分箱
+    （b2）如果有类别只包含好坏样本的一种，需要合并
+'''
+num_features = ['loan_amnt','int_rate','emp_length','annual_inc', 'dti', 'delinq_2yrs','inq_last_6mths',"open_acc", \
+                "pub_rec","revol_bal","total_acc","total_rec_prncp","total_rec_late_fee",'limit_income',"earliest_cr_to_issue_d"]
+cat_features=["grade","emp_title","home_ownership","verification_status","pymnt_plan","desc","purpose","title","zip_code","addr_state"]
+###对类别型变量进行分箱
+more_value_features = []
+less_value_features = []
+# 第一步，检查类别型变量中，哪些变量取值超过5
+for var in cat_features:
+    valueCounts = len(set(traindata[var]))
+    print(valueCounts)
+    if valueCounts > 5:
+        more_value_features.append(var)
+    else:
+        less_value_features.append(var)
+
+# （i）当取值<5时：如果每种类别同时包含好坏样本，无需分箱；如果有类别只包含好坏样本的一种，需要合并
+
+traindata.rename(columns={"loan_status":"y"},inplace=True)
+##选出类别数小于5的类别变量，看是否同时包含正负样本
+merge_bin = {}
+for col in less_value_features:
+    col='home_ownership'
+    binBadRate = BinBadRate(traindata, col, 'y')[0]
+    if min(binBadRate.values()) == 0 or max(binBadRate.values()) == 1:
+        print (col+' need to be combined')
+        combine_bin = MergeBad0(traindata, col, 'y')
+        merge_bin[col] = combine_bin
+
+##输出结果可知，每种小于5的样本都是非纯度样本无需合并
+# （ii）当取值>5时：用bad rate进行编码，放入连续型变量里
+#定义编码函数
+br_encoding_dict = {}
+for col in more_value_features:
+    br_encoding = BadRateEncoding(traindata, col,"y")
+    traindata[col+'_br_encoding'] = br_encoding['encoding']
+    br_encoding_dict[col] = br_encoding['bad_rate']
+    num_features.append(col+'_br_encoding')
+####将连续性变量进行分箱
+##将连续变量切分，并返回切分去重后对应的组值
+
+continous_merged_dict = {}
+var_bin_list=[]
+set(traindata['pub_rec'])
+for col in num_features:
+
+    print ("{} is in processing".format(col))
+    if -1 not in set(traindata[col]):   #－1会当成特殊值处理。如果没有－1，则所有取值都参与分箱
+        max_interval = 5   #分箱后的最多的箱数
+        cutOff = chimerge(traindata, col, 'y', max_interval=max_interval,special_attribute=[],minBinPcnt=0)
+        traindata[col+'_Bin'] = traindata[col].map(lambda x: AssignBin(x, cutOff,special_attribute=[]))
+        monotone = BadRateMonotone(traindata, col+'_Bin', 'y')   # 检验分箱后的单调性是否满足
+        while(not monotone):
+            # 检验分箱后的单调性是否满足。如果不满足，则缩减分箱的个数。
+            max_interval -= 1
+            cutOff = chimerge(traindata, col, 'y', max_interval=max_interval, special_attribute=[],
+                                          minBinPcnt=0)
+            traindata[col + '_Bin'] = traindata[col].map(lambda x: AssignBin(x, cutOff, special_attribute=[]))
+            if max_interval == 2:
+                # 当分箱数为2时，必然单调
+                break
+            monotone = BadRateMonotone(traindata, col + '_Bin', 'y')
+        newVar = col + '_Bin'
+        traindata[newVar] = traindata[col].map(lambda x: AssignBin(x, cutOff, special_attribute=[]))
+        var_bin_list.append(newVar)
+    else:
+        max_interval = 5
+        # 如果有－1，则除去－1后，其他取值参与分箱
+        cutOff = chimerge(traindata, col, 'y', max_interval=max_interval, special_attribute=[-1],
+                                      minBinPcnt=0)
+        traindata[col + '_Bin'] = traindata[col].map(lambda x: AssignBin(x, cutOff, special_attribute=[-1]))
+        monotone = BadRateMonotone(traindata, col + '_Bin', 'y',['Bin-1'])
+        while (not monotone):
+            max_interval -= 1
+            # 如果有－1，－1的bad rate不参与单调性检验
+            cutOff = chimerge(traindata, col, 'y', max_interval=max_interval, special_attribute=[-1],
+                                          minBinPcnt=0)
+            traindata[col + '_Bin'] = traindata[col].map(lambda x: AssignBin(x, cutOff, special_attribute=[-1]))
+            if max_interval == 3:
+                # 当分箱数为3-1=2时，必然单调
+                break
+            monotone = BadRateMonotone(traindata, col + '_Bin', 'y',['Bin-1'])
+        newVar = col + '_Bin'
+        traindata[newVar] = traindata[col].map(lambda x: AssignBin(x, cutOff, special_attribute=[-1]))
+        var_bin_list.append(newVar)
+    continous_merged_dict[col] = cutOff
+#####coltinous_merged_dict为连续型变量的分箱结果
+
+'''
+第四步：WOE编码、计算IV
+'''
+WOE_dict = {}
+IV_dict = {}
+# 分箱后的变量进行编码，包括：
+# 1，初始取值个数小于5，且不需要合并的类别型变量。存放在less_value_features中
+# 2，初始取值个数小于5，需要合并的类别型变量。合并后新的变量存放在var_bin_list中
+# 3，初始取值个数超过5，需要合并的类别型变量。合并后新的变量存放在var_bin_list中
+# 4，连续变量。分箱后新的变量存放在var_bin_list中
+all_var = var_bin_list  + less_value_features
+for var in all_var:
+    print(var+" is processing")
+    woe_iv = CalcWOE(traindata,var,'y')
+    WOE_dict[var] = woe_iv['WOE']
+    IV_dict[var] = woe_iv['IV']
+#将变量IV值进行降序排列，方便后续挑选变量
+IV_dict_sorted = sorted(IV_dict.items(), key=lambda x: x[1], reverse=True)
+IV_values = [i[1] for i in IV_dict_sorted]
+IV_name = [i[0] for i in IV_dict_sorted]
+##作图
+font2 = {'weight' : 'normal','size': 17}
+##未经筛选的IV值分布图
+plt.rcParams['font.sans-serif']=['SimHei'] #用来正常显示中文标签
+plt.rcParams['axes.unicode_minus']=False #用来正常显示负号
+plt.figure(figsize=(9,6))
+plt.title('所有变量IV值分布图',font2)
+plt.bar(range(len(IV_values)),IV_values)
+plt.xticks(range(len(IV_values)),IV_name,rotation=90)
+font2 = {'weight' : 'normal','size': 17}
+plt.xlabel("变量名称",font2)
+plt.ylabel("IV值",font2)
+"""
+第五步：单变量分析和多变量分析，均基于WOE编码后的值。
+（1）选择IV高于0.01的变量
+（2）比较两两线性相关性。如果相关系数的绝对值高于阈值，剔除IV较低的一个
+"""
+high_IV = {k:v for k, v in IV_dict.items() if v >= 0.01}
+high_IV_sorted = sorted(high_IV.items(),key=lambda x:x[1],reverse=True)
+high_IV_values = [i[1] for i in high_IV_sorted ]
+high_IV_name = [i[0] for i in high_IV_sorted ]
+##IV值大于0.01的变量分布图
+plt.rcParams['font.sans-serif']=['SimHei'] #用来正常显示中文标签
+plt.rcParams['axes.unicode_minus']=False #用来正常显示负号
+plt.figure(figsize=(9,6))
+plt.title('IV值大于0.01变量IV值分布图',font2)
+plt.bar(range(len(high_IV_values)),high_IV_values,color="red")
+plt.xticks(range(len(high_IV_values)),high_IV_name,rotation=90)
+
+plt.xlabel("变量名称",font2)
+plt.ylabel("IV值",font2)
+
+short_list = high_IV.keys()
+short_list_2 = []
+for var in short_list:
+    newVar = var + '_WOE'
+    traindata[newVar] = traindata[var].map(WOE_dict[var])
+    short_list_2.append(newVar)
+#对于上一步的结果，计算相关系数矩阵，并画出热力图进行数据可视化
+traindataWOE = traindata[short_list_2]
+corr = traindataWOE.corr()
+corr1=pd.DataFrame(corr).copy()
+for i in range(corr1.shape[0]):
+    for j in range(corr1.shape[0]):
+        corr1.iloc[i][j]=float('%.2f' %corr1.iloc[i][j])
+f, ax = plt.subplots(figsize=(10,10))
+sns.heatmap(corr1,annot=True,vmax=1,vmin=0,xticklabels=True,yticklabels=True,square=True,cmap="YlGnBu")
+plt.title("变量相关性热力图",font2)
+
+#两两间的线性相关性检验
+#1，将候选变量按照IV进行降序排列
+#2，计算第i和第i+1的变量的线性相关系数
+#3，对于系数超过阈值的两个变量，剔除IV较低的一个
+deleted_index = []
+cnt_vars = len(high_IV_sorted)
+for i in range(cnt_vars):
+    if i in deleted_index:
+        continue
+    x1 = high_IV_sorted[i][0]+"_WOE"
+    for j in range(cnt_vars):
+        if i == j or j in deleted_index:
+            continue
+        y1 = high_IV_sorted[j][0]+"_WOE"
+        roh = np.corrcoef(traindata[x1],traindata[y1])[0,1]
+        if abs(roh)>=0.7:
+            x1_IV = high_IV_sorted[i][1]
+            y1_IV = high_IV_sorted[j][1]
+            if x1_IV > y1_IV:
+                deleted_index.append(j)
             else:
-                # 和前一箱进行合并，并且计算卡方值
-                currentIndex = list(regroup.temp_Bin).index(bin)
-                prevIndex = list(regroup.temp_Bin)[currentIndex - 1]
-                df3 = df2.loc[df2['temp_Bin'].isin([prevIndex, bin])]
-                (binBadRate, df2b) = BinBadRate(df3, 'temp_Bin', target)
-                #chisq1 = Chi2(df2b, 'total', 'bad', overallRate)
-                chisq1 = Chi2(df2b, 'total', 'bad',overallRate)
-                # 和后一箱进行合并，并且计算卡方值
-                laterIndex = list(regroup.temp_Bin)[currentIndex + 1]
-                df3b = df2.loc[df2['temp_Bin'].isin([laterIndex, bin])]
-                (binBadRate, df2b) = BinBadRate(df3b, 'temp_Bin', target)
-                #chisq2 = Chi2(df2b, 'total', 'bad', overallRate)
-                chisq2 = Chi2(df2b, 'total', 'bad',overallRate)
-                if chisq1 < chisq2:
-                    cutOffPoints.remove(cutOffPoints[currentIndex - 1])
-                else:
-                    cutOffPoints.remove(cutOffPoints[currentIndex])
-            # 完成合并之后，需要再次计算新的分箱准则下，每箱是否同时包含好坏样本
-            groupedvalues = df2['temp'].apply(lambda x: AssignBin(x, cutOffPoints))
-            df2['temp_Bin'] = groupedvalues
-            (binBadRate, regroup) = BinBadRate(df2, 'temp_Bin', target)
-            [minBadRate, maxBadRate] = [min(binBadRate.values()), max(binBadRate.values())]
-        # 需要检查分箱后的最小占比
-        if minBinPcnt > 0:
-            groupedvalues = df2['temp'].apply(lambda x: AssignBin(x, cutOffPoints))
-            df2['temp_Bin'] = groupedvalues
-            valueCounts = groupedvalues.value_counts().to_frame()
-            valueCounts['pcnt'] = valueCounts['temp'].apply(lambda x: x * 1.0 / N)
-            valueCounts = valueCounts.sort_index()
-            minPcnt = min(valueCounts['pcnt'])
-            while minPcnt < minBinPcnt and len(cutOffPoints) > 2:
-                # 找出占比最小的箱
-                indexForMinPcnt = valueCounts[valueCounts['pcnt'] == minPcnt].index.tolist()[0]
-                # 如果占比最小的箱是最后一箱，则需要和上一个箱进行合并，也就意味着分裂点cutOffPoints中的最后一个需要移除
-                if indexForMinPcnt == max(valueCounts.index):
-                    cutOffPoints = cutOffPoints[:-1]
-                # 如果占比最小的箱是第一箱，则需要和下一个箱进行合并，也就意味着分裂点cutOffPoints中的第一个需要移除
-                elif indexForMinPcnt == min(valueCounts.index):
-                    cutOffPoints = cutOffPoints[1:]
-                # 如果占比最小的箱是中间的某一箱，则需要和前后中的一个箱进行合并，依据是较小的卡方值
-                else:
-                    # 和前一箱进行合并，并且计算卡方值
-                    currentIndex = list(valueCounts.index).index(indexForMinPcnt)
-                    prevIndex = list(valueCounts.index)[currentIndex - 1]
-                    df3 = df2.loc[df2['temp_Bin'].isin([prevIndex, indexForMinPcnt])]
-                    (binBadRate, df2b) = BinBadRate(df3, 'temp_Bin', target)
-                    #chisq1 = Chi2(df2b, 'total', 'bad', overallRate)
-                    chisq1 = Chi2(df2b, 'total', 'bad', overallRate)
-                    # 和后一箱进行合并，并且计算卡方值
-                    laterIndex = list(valueCounts.index)[currentIndex + 1]
-                    df3b = df2.loc[df2['temp_Bin'].isin([laterIndex, indexForMinPcnt])]
-                    (binBadRate, df2b) = BinBadRate(df3b, 'temp_Bin', target)
-                    #chisq2 = Chi2(df2b, 'total', 'bad', overallRate)
-                    chisq2 = Chi2(df2b, 'total', 'bad', overallRate)
-                    if chisq1 < chisq2:
-                        cutOffPoints.remove(cutOffPoints[currentIndex - 1])
-                    else:
-                        cutOffPoints.remove(cutOffPoints[currentIndex])
-        cutOffPoints = special_attribute + cutOffPoints
-        return cutOffPoints
-def CalcWOE(df, col, target):
-    '''
-    :param df: 包含需要计算WOE的变量和目标变量
-    :param col: 需要计算WOE、IV的变量，必须是分箱后的变量，或者不需要分箱的类别型变量
-    :param target: 目标变量，0、1表示好、坏
-    :return: 返回WOE和IV
-    '''
-    total = df.groupby([col])[target].count()
-    total = pd.DataFrame({'total': total})
-    bad = df.groupby([col])[target].sum()
-    bad = pd.DataFrame({'bad': bad})
-    regroup = total.merge(bad, left_index=True, right_index=True, how='left')
-    regroup.reset_index(level=0, inplace=True)
-    N = sum(regroup['total'])
-    B = sum(regroup['bad'])
-    regroup['good'] = regroup['total'] - regroup['bad']
-    G = N - B
-    regroup['bad_pcnt'] = regroup['bad'].map(lambda x: x*1.0/B)
-    regroup['good_pcnt'] = regroup['good'].map(lambda x: x * 1.0 / G)
-    regroup['WOE'] = regroup.apply(lambda x: np.log(x.good_pcnt*1.0/x.bad_pcnt),axis = 1)
-    WOE_dict = regroup[[col,'WOE']].set_index(col).to_dict(orient='index')
-    for k, v in WOE_dict.items():
-        WOE_dict[k] = v['WOE']
-    IV = regroup.apply(lambda x: (x.good_pcnt-x.bad_pcnt)*np.log(x.good_pcnt*1.0/x.bad_pcnt),axis = 1)
-    IV = sum(IV)
-    return {"WOE": WOE_dict, 'IV':IV}
-def MergeBad0(df,col,target, direction='bad'):
-    '''
-     :param df: 包含检验0％或者100%坏样本率
-     :param col: 分箱后的变量或者类别型变量。检验其中是否有一组或者多组没有坏样本或者没有好样本。如果是，则需要进行合并
-     :param target: 目标变量，0、1表示好、坏
-     :return: 合并方案，使得每个组里同时包含好坏样本
-     '''
-    regroup = BinBadRate(df, col, target)[1]
-    if direction == 'bad':
-        # 如果是合并0坏样本率的组，则跟最小的非0坏样本率的组进行合并
-        regroup = regroup.sort_values(by  = 'bad_rate')
-    else:
-        # 如果是合并0好样本样本率的组，则跟最小的非0好样本率的组进行合并
-        regroup = regroup.sort_values(by='bad_rate',ascending=False)
-    regroup.index = range(regroup.shape[0])
-    col_regroup = [[i] for i in regroup[col]]
-    del_index = []
-    for i in range(regroup.shape[0]-1):
-        col_regroup[i+1] = col_regroup[i] + col_regroup[i+1]
-        del_index.append(i)
-        if direction == 'bad':
-            if regroup['bad_rate'][i+1] > 0:
-                break
-        else:
-            if regroup['bad_rate'][i+1] < 1:
-                break
-    col_regroup2 = [col_regroup[i] for i in range(len(col_regroup)) if i not in del_index]
-    newGroup = {}
-    for i in range(len(col_regroup2)):
-        for g2 in col_regroup2[i]:
-            newGroup[g2] = 'Bin '+str(i)
-    return newGroup
-def CalcWOE(df, col, target):
-    '''
-    :param df: 包含需要计算WOE的变量和目标变量
-    :param col: 需要计算WOE、IV的变量，必须是分箱后的变量，或者不需要分箱的类别型变量
-    :param target: 目标变量，0、1表示好、坏
-    :return: 返回WOE和IV
-    '''
-    total = df.groupby([col])[target].count()
-    total = pd.DataFrame({'total': total})
-    bad = df.groupby([col])[target].sum()
-    bad = pd.DataFrame({'bad': bad})
-    regroup = total.merge(bad, left_index=True, right_index=True, how='left')
-    regroup.reset_index(level=0, inplace=True)
-    N = sum(regroup['total'])
-    B = sum(regroup['bad'])
-    regroup['good'] = regroup['total'] - regroup['bad']
-    G = N - B
-    regroup['bad_pcnt'] = regroup['bad'].map(lambda x: x*1.0/B)
-    regroup['good_pcnt'] = regroup['good'].map(lambda x: x * 1.0 / G)
-    regroup['WOE'] = regroup.apply(lambda x: np.log(x.good_pcnt/x.bad_pcnt),axis = 1)
-    WOE_dict = regroup[[col,'WOE']].set_index(col).to_dict(orient='index')
-    for k, v in WOE_dict.items():
-        WOE_dict[k] = v['WOE']
-    IV = regroup.apply(lambda x: (x.good_pcnt-x.bad_pcnt)*np.log(x.good_pcnt*1.0/x.bad_pcnt),axis = 1)
-    IV = sum(IV)
-    return {"WOE": WOE_dict, 'IV':IV}
-def BinBadRate(df, col, target, grantRateIndicator=0):
-    '''
-    :param df: 需要计算好坏比率的数据集
-    :param col: 需要计算好坏比率的特征
-    :param target: 好坏标签
-    :param grantRateIndicator: 1返回总体的坏样本率，0不返回
-    :return: 每箱的坏样本率，以及总体的坏样本率（当grantRateIndicator＝＝1时）
-    返回的三个属性中包含的值包括：dict(分类变量的每个类别及对应的坏样本率) regroup(分类变量的矩阵，
-    包括每个分类样本的类别，每个类别的总的个数，每个类别的坏样本及每个类别的坏样本率，overrall(总的坏样本率)
-    )
-    '''
-    total = df.groupby([col])[target].count()
-    total = pd.DataFrame({'total': total})
-    bad = df.groupby([col])[target].sum()
-    bad = pd.DataFrame({'bad': bad})
-    regroup = total.merge(bad, left_index=True, right_index=True, how='left')
-    regroup.reset_index(level=0, inplace=True)
-    regroup['bad_rate'] = regroup.apply(lambda x: x.bad * 1.0 / x.total, axis=1)
-    dicts = dict(zip(regroup[col],regroup['bad_rate']))
-    if grantRateIndicator==0:
-        return (dicts, regroup)
-    N = sum(regroup['total'])
-    B = sum(regroup['bad'])
-    overallRate = B * 1.0 / N
-    return (dicts, regroup, overallRate)
-def BadRateEncoding(df, col, target):
-    '''
-    :param df: 需要计算好坏比率的数据集
-    :param col: 需要计算好坏比率的特征
-    :param target: 好坏标签
-    :return:分类样本中每个分类样本的badrate所形成的列和对应的分类变量与badrate的特征集合
-    '''
-    regroup = BinBadRate(df, col, target, grantRateIndicator=0)[1]
-    br_dict = regroup[[col,'bad_rate']].set_index([col]).to_dict(orient='index')
-    for k, v in br_dict.items():
-        br_dict[k] = v['bad_rate']
-    badRateEnconding = df[col].map(lambda x: br_dict[x])
-    return {'encoding':badRateEnconding, 'bad_rate':br_dict}
-def prob2score(prob, basePoint, PDO):
-    #将概率转化成分数且为正整数
-    y = np.log(prob/(1-prob))
-    return int(basePoint+PDO/np.log(2)*(-y))
+                deleted_index.append(i)
+
+multi_analysis_vars_1 = [high_IV_sorted[i][0]+"_WOE" for i in range(cnt_vars) if i not in deleted_index]
+'''
+多变量分析：VIF
+'''
+X = np.matrix(traindata[multi_analysis_vars_1])
+VIF_list = [variance_inflation_factor(X, i) for i in range(X.shape[1])]
+max_VIF = max(VIF_list)
+print(max_VIF)
+"""
+第六步：逻辑回归模型。
+"""
+
+
+#################################
+###最终选择的变量
+choose_var=['int_rate',
+ 'total_rec_late_fee',
+ 'annual_inc',
+ 'inq_last_6mths',
+ 'purpose',
+ 'addr_state',
+ 'limit_income',
+ 'earliest_cr_to_issue_d',
+ 'dti',
+ 'home_ownership',
+ 'pub_rec',"loan_status"]
+###选择将要建模的数据框
+traindata_choose=allData3.loc[:,choose_var]  
+traindata_choose.rename(columns={"loan_status":"y"},inplace=True)
+
+###purpose变量编码
+purpose_bad=BinBadRate(traindata_choose,"purpose","y")[1]
+purpose_sort=purpose_bad.sort_index(axis=0,ascending=True,by="bad_rate")
+purpose_sort_name=list(purpose_sort["purpose"])
+a=zip(purpose_sort_name,list(range(len(purpose_sort_name))))
+a1=dict(a)
+###home_ownership
+home_ownership_bad=BinBadRate(traindata_choose,"home_ownership","y")[1]
+home_ownership_sort=home_ownership_bad.sort_index(axis=0,ascending=True,by="bad_rate")
+home_ownership_sort_name=list(home_ownership_sort["home_ownership"])
+b=zip(home_ownership_sort_name,list(range(len(home_ownership_sort_name))))
+b1=dict(b)
+list(b1)
+
+###对州进行编码
+addr_state_bad=BinBadRate(traindata_choose,"addr_state","y")[1]
+addr_state_sort=addr_state_bad.sort_index(axis=0,ascending=True,by="bad_rate")
+addr_state_sort_name=list(addr_state_sort["addr_state"])
+c=zip(addr_state_sort_name,list(range(len(addr_state_sort_name))))
+c1=dict(c)
+
+mapping_dict = {"purpose":a1,"home_ownership":b1,"addr_state":c1}
+traindata_choose=traindata_choose.replace(mapping_dict)
+#########处理样本不均衡问题
+##做出样本图
+Y=traindata_choose.iloc[:,-1]
+a=(Y==1).sum()
+b=(Y==0).sum()
+plt.figure(figsize=(4,6))
+rects =plt.bar(left = (0.4,0.8),height = (a,b),width = 0.2,align="center")#,color=["red","green"])
+plt.title('smote抽样前样本分布图')
+plt.xticks((0.4,0.8),('违约用户','非违约用户'))
+for rect in rects:
+   height =rect.get_height()
+   plt.text(rect.get_x()+0.05,height+100,'%s' % float(height))
+
+####smote算法
+X=traindata_choose.iloc[:,:-1]
+Y=traindata_choose.iloc[:,-1]
+print(Counter(Y))
+smo = SMOTE(random_state=42)#,ratio={1:14000})
+X_smo, Y_smo = smo.fit_sample(X, Y)
+print(Counter(Y_smo))
+X_smo=pd.DataFrame(X_smo)
+Y_smo=pd.DataFrame(Y_smo)
+smo_data=pd.concat([X_smo,Y_smo],axis=1)
+smo_data.columns=('int_rate','total_rec_late_fee', 'annual_inc', 'inq_last_6mths','purpose', 'addr_state', 'limit_income', 'earliest_cr_to_issue_d','dti', 'home_ownership', 'pub_rec', 'y')
+traindata_choose_smo=smo_data.copy()
+Y=traindata_choose_smo.y
+a=(Y==1).sum()
+b=(Y==0).sum()
+plt.figure(figsize=(4,6))
+rects =plt.bar(left = (0.4,0.8),height = (a,b),width = 0.2,align="center")#,color=["red","green"])
+plt.title('smote抽样后违约样本分布图')
+plt.xticks((0.4,0.8),('违约用户','非违约用户'))
+for rect in rects:
+   height =rect.get_height()
+   plt.text(rect.get_x()+0.05,height+100,'%s' % float(height))
+
+
+###分箱
+cut_var=traindata_choose_smo.columns[0:-1]
+choose_var_bin_list=[]
+
+for col in cut_var:
+    print ("{} is in processing".format(col))
+    max_interval = 5   #分箱后的最多的箱数
+    cutOff = chimerge(traindata_choose_smo, col, 'y', max_interval=max_interval,special_attribute=[],minBinPcnt=0)
+    traindata_choose_smo[col+'_Bin'] = traindata_choose_smo[col].map(lambda x: AssignBin(x, cutOff,special_attribute=[]))
+    monotone = BadRateMonotone(traindata_choose_smo, col+'_Bin', 'y')   # 检验分箱后的单调性是否满足
+    while(not monotone):
+        # 检验分箱后的单调性是否满足。如果不满足，则缩减分箱的个数。
+        max_interval -= 1
+        cutOff = chimerge(traindata_choose_smo, col, 'y', max_interval=max_interval, special_attribute=[],minBinPcnt=0)
+        traindata_choose_smo[col + '_Bin'] = traindata_choose_smo[col].map(lambda x: AssignBin(x, cutOff, special_attribute=[]))
+        if max_interval == 2:
+            # 当分箱数为2时，必然单调
+            break
+        monotone = BadRateMonotone(traindata_choose_smo, col + '_Bin', 'y')
+        newVar = col + '_Bin'
+        traindata_choose_smo[newVar] = traindata_choose_smo[col].map(lambda x: AssignBin(x, cutOff, special_attribute=[]))
+        choose_var_bin_list.append(newVar)
+    print(cutOff)
+WOE_VAR=traindata_choose_smo.columns[12:]
+for VAR in WOE_VAR:
+    a=BinBadRate(traindata_choose_smo, VAR,"y", grantRateIndicator=0)
+    print(a[1]["bad_rate"])
+ traindata_choose["earliest_cr_to_issue_d"]
+##计算各个变量的IV，WOE编码
+WOE_dict_1={}
+IV_dict_1={}
+a=[]
+for var in WOE_VAR:
+    print(var+" is processing")
+    woe_iv = CalcWOE(traindata_choose_smo,var,'y')
+    WOE_dict_1[var] = woe_iv['WOE']    
+    IV_dict_1[var] = woe_iv['IV']
+WOE_dict_1
+IV_dict_1
+short_list_1=[]
+for a in WOE_dict_1:
+    print(a.item())
+####将各个变量的分箱进行WOE编码
+for var in WOE_VAR:
+    newVar = var + '_WOE'
+    traindata_choose_smo[newVar] = traindata_choose_smo[var].map(WOE_dict_1[var])
+    short_list_1.append(newVar)
+short_list_2=short_list_1.copy()
+short_list_2.append("y")
+data_woe=traindata_choose_smo.loc[:,short_list_2]
+(data_woe.y==1).sum()
+(data_woe.y==0).sum()
+######logistic模型建立
+"""
+分测试集和训练集
+"""
+traindata=["traindata1","traindata2","traindata3","traindata4","traindata5"]
+testdata=["testdata1","testdata2","testdata3","testdata4","testdata5"]
+
+for i in range(0, 5):  
+    traindata[i]=train_test_split(data_woe,test_size=0.2,random_state=i)[0]
+    testdata[i]= train_test_split(data_woe,test_size=0.2,random_state=i)[0]
+    traindata[i].reset_index(drop=True,inplace=True)
+    testdata[i].reset_index(drop=True,inplace=True)
+
+##建立模型
+multi_analysis = short_list_1.copy()
+### (1)将多变量分析的后变量带入LR模型中
+y = traindata[0]['y']
+X = traindata[0][multi_analysis]
+LR = sm.Logit(y, X).fit()
+summary = LR.summary()
+summary.
+
+#### 有些变量不显著，需要逐步剔除
+##第一次移除
+
+
+
+###预测
+y_test=testdata[0].y
+x_test=testdata[0][multi_analysis]
+resu=LR.predict(x_test.astype(float))#进行预测
+testdata1["prob"]=resu
+####计算roc曲线
+fpr, tpr, threshold=roc_curve(y_test, resu)
+rocauc = auc(fpr, tpr)
+plt.plot(fpr, tpr, 'b', label='AUC = %0.2f' % rocauc)#生成ROC曲线
+plt.legend(loc='lower right')
+plt.plot([0, 1], [0, 1], 'r--')
+plt.xlim([0, 1])
+plt.ylim([0, 1])
+plt.ylabel('真正率')
+plt.xlabel('假正率')
+### 计算混淆矩阵
+from sklearn.metrics import confusion_matrix
+for i in range(0,5):    
+    y = traindata[i]['y']
+    X = traindata[i][multi_analysis]
+    LR = sm.Logit(y, X).fit()
+    summary = LR.summary()
+    y_test=testdata[i].y
+    x_test=testdata[i][multi_analysis]
+    resu=LR.predict(x_test.astype(float))#进行预测
+    ## 混淆矩阵的计算
+    pred_1=resu.copy()
+    g=0.66
+    pred_1[pred_1>=g]=1
+    pred_1[pred_1<g]=0
+    a=confusion_matrix(y_true=y_test,y_pred=pred_1)
+    正确率=(a[0][0]+a[1][1])/a.sum()
+    真正率=a[0][0]/(a[0][0]+a[0][1])
+    假正率=a[1][0]/(a[1][0]+a[1][1])
+    ## roc的计算
+    fpr, tpr, threshold=roc_curve(y_test, resu)
+    rocauc = auc(fpr, tpr)
+    print(正确率,",",真正率,",",假正率,rocauc)
+    
+####从概率到分数
+basePoint = 600
+PDO = 50
+testdata1['score'] = testdata1['prob'].map(lambda x:Prob2Score(x, basePoint, PDO))
+testdata = testdata1.sort_values(by = 'score')
+prob2score(0.66, basePoint, PDO)
+
+
+
+
+
+
+
