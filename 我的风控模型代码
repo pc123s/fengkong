@@ -552,10 +552,11 @@ for i in range(0,5):
     g=0.66
     pred_1[pred_1>=g]=1
     pred_1[pred_1<g]=0
-    a=confusion_matrix(y_true=y_test,y_pred=pred_1)
-    正确率=(a[0][0]+a[1][1])/a.sum()
-    真正率=a[0][0]/(a[0][0]+a[0][1])
-    假正率=a[1][0]/(a[1][0]+a[1][1])
+    a=confusion_matrix(y_true=y_test,y_pred=y_pred1)
+    tn,fp,fn,tp=a.ravel()
+    正确率=(tp+tn)/a.sum()
+    真正率=tp/(tp+fp)
+    假正率=tn/(tn+fn)
     ## roc的计算
     fpr, tpr, threshold=roc_curve(y_test, resu)
     rocauc = auc(fpr, tpr)
